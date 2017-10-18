@@ -17,14 +17,14 @@ return function(port)
         tmr.stop(_tmrid)
     end
 
-    local function readsend(c)
+    local function readsend(s,port,ip)
         _tblk=_tblk+1
         local msb = _tblk/256 --assumes int firmware
         local lsb = _tblk - msb*256
         local b=string.char(msb, lsb)
 
         if(file.open(_fn,"r")==nil) then
-            c:send("\0\5\0\1\0") --Error: 1=file not found
+            s:send(port,ip,"\0\5\0\1\0") --Error: 1=file not found
             reset()
             return
         end
@@ -36,7 +36,7 @@ return function(port)
         if(r == nil) then
             r = ""
         end
-        c:send("\0\3"..b..r)
+        s:send(port,ip,"\0\3"..b..r)
         uart.write(0,"#")
         if(r:len() ~= 512) then
             print("done!")
@@ -63,9 +63,11 @@ return function(port)
         alarmstart()
     end
 
-    local s=net.createServer(net.UDP)
-    s:on("receive", function(c,r) 
+    local s=net.createUDPSocket()
+    s:on("receive", function(s,r,port,ip) 
+        print("r",r,"port ",port," ip ",ip)
         local op=r:byte(2)
+        print("port ",port," ip ",ip)
         if(op==1) then
             --RRQ
             if(_lock) then
@@ -74,14 +76,14 @@ return function(port)
             _fn=string.match(r,"..(%Z+)")
             uart.write(0,"TFTP RRQ '".._fn.."': ")
             if(file.open(_fn, "r")==nil) then
-                c:send("\0\5\0\1\0") --Error: 1=file not found
+                s:send(port,ip,"\0\5\0\1\0") --Error: 1=file not found
                 reset()
                 return
             end
             file.close()
             _lock=op
             alarmstart()
-            readsend(c)
+            readsend(s,port,ip)
             collectgarbage()
         elseif(op==2) then
             --WRQ
@@ -93,7 +95,7 @@ return function(port)
             _tblk=1
             _lock=op
             alarmstart()
-            c:send("\0\4\0\0")
+            s:send(port,ip,"\0\4\0\0")
         elseif(op==3) then
             --DATA received for a WRQ
             if(_lock~=2) then
@@ -105,15 +107,15 @@ return function(port)
                 return
             end
             alarmclear()
-            c:send("\0\4"..r:sub(3,4))
+            s:send(port,ip,"\0\4"..r:sub(3,4))
             _tblk=b+1
             if(file.open(_fn,"a")==nil) then
-                c:send("\0\5\0\1\0") --Error: 1=file not found
+                s:send(port,ip,"\0\5\0\1\0") --Error: 1=file not found
                 reset()
                 return
             end
             if(file.write(r:sub(5))==nil) then
-                c:send("\0\5\0\3\0") --Error: no space left
+                s:send(port,ip,"\0\5\0\3\0") --Error: no space left
                 reset()
                 return
             end
@@ -134,11 +136,11 @@ return function(port)
                 return
             end
             alarmclear()
-            readsend(c)
+            readsend(s,port,ip)
             collectgarbage()
         else
             --ERROR: 4=illegal op
-            c:send("\0\5\0\4\0")
+            s:send(port,ip,"\0\5\0\4\0")
         end
     end) 
     s:listen(port)
